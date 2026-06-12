@@ -1,3 +1,6 @@
+<img width="1276" height="745" alt="image" src="https://github.com/user-attachments/assets/1c041113-7356-4814-9258-5f130dc7cd55" />
+
+
 # Torrent File Finder
 This tool is intended to help find and re-allocate the contents of torrent files after they are moved out of the original torrent's folder structure.
 Open a .torrent file and perform a NTFS table search looking for valid matches.
@@ -6,6 +9,8 @@ How it works:
 This is a packaged python script that ships with Everything by voidtools and its CLI.
 After opening a .torrent file it will display the original folder structure.
 The Start Search button then sends the signal to Everything Server to look for matching files based on name and size.
+
+Note: it can take longer to load for the first time depending on the size of the NTFS tables.
 
 If all files are found with the correct torrent folder structure the script will display a message with an option to copy the path for you to add to your torrent client.
 If it finds all files but they were moved outside of the original folder structure, the script will prompt the user to copy or move all files to a new location.
