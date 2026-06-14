@@ -23,5 +23,3 @@ Currently it has a standalone Everything executable that does not interact with 
 
 Next steps for this tool:
 If the user has his own instance of Everything with its own database, I intend to allow the program to use it instead of having to build a new one from scratch.
-Also planned: integrate support for automatically adding valid or reallocated torrents to qbittorrent.
-No ETA.
