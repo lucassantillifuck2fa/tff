@@ -27,8 +27,23 @@ def is_running_as_admin():
 class TorrentLocatorsApp(TkinterDnD.Tk):
     def __init__(self):
         super().__init__()
-        self.title(f"Torrent Content Local Finder (Instance: {INSTANCE_NAME})")
+        if sys.platform == "win32":
+            try:
+                # Define the necessary Windows message constants
+                WM_DROPFILES = 0x0233
+                WM_COPYDATA = 0x004A
+                WM_MSGFILTER_MIN = 0x0049  # Often passed as raw 0x0049 or 0x0047
+                MSGFLT_ADD = 1
+                
+                # Punch holes in the User Interface Privilege Isolation (UIPI) filter
+                ctypes.windll.user32.ChangeWindowMessageFilter(WM_DROPFILES, MSGFLT_ADD)
+                ctypes.windll.user32.ChangeWindowMessageFilter(WM_COPYDATA, MSGFLT_ADD)
+                ctypes.windll.user32.ChangeWindowMessageFilter(WM_MSGFILTER_MIN, MSGFLT_ADD)
+            except Exception as e:
+                print(f"Failed to bind UIPI exceptions: {e}")
+        self.title(f"Torrent File Finder (Instance: {INSTANCE_NAME})")
         self.geometry("1280x720")
+        self.center_window_on_screen()
         
         self.torrent_files = []
         self.drive_vars = {}
@@ -36,13 +51,14 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
         self.root_node_id = None
         self.torrent_name = ""
         self.torrent_levels = 1
+        self.current_torrent_path = ""  # Track the loaded .torrent file path
         
         # --- Strict Admin Check Intercept ---
         if not is_running_as_admin():
             messagebox.showerror(
                 "Administrator Rights Required",
                 "This application requires Administrative Privileges to run.\n\n"
-                "The search engine needs low-level read access to NTFS tables"
+                "The search engine needs low-level read access to NTFS tables\n"
                 "to index your drives instantly.\n\n"
                 "Please right-click the executable and select 'Run as administrator'."
             )
@@ -56,7 +72,36 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
         self.detect_ntfs_drives()
         
         self.protocol("WM_DELETE_WINDOW", self.on_exit_cleanup)
+        
+    def center_window_on_screen(self):
+        """Initial screen centering for the main window layout."""
+        self.update_idletasks()
+        width = 1280
+        height = 720
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f'{width}x{height}+{x}+{y}')
 
+    def center_dialog(self, dialog, width, height):
+        """Calculates coordinates to center a dialog window perfectly over the main app frame."""
+        dialog.update_idletasks()
+        
+        # Pull current parent window coordinates and dimensions
+        parent_x = self.winfo_x()
+        parent_y = self.winfo_y()
+        parent_width = self.winfo_width()
+        parent_height = self.winfo_height()
+        
+        # Run placement offsets calculation
+        x = parent_x + (parent_width // 2) - (width // 2)
+        y = parent_y + (parent_height // 2) - (height // 2)
+        
+        # Enforce boundary safety thresholds
+        x = max(0, x)
+        y = max(0, y)
+        
+        dialog.geometry(f'{width}x{height}+{x}+{y}')
+        
     def setup_environment_paths(self):
         appdata_roaming = os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))
         self.permanent_dir = os.path.normpath(os.path.join(appdata_roaming, "TorrentFileFinder"))
@@ -141,13 +186,13 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
             self, text=" Load Torrent File ", 
             bg="#2c3e50", fg="white", font=("Arial", 11, "bold"), bd=2, relief="groove"
         )
-        self.drop_frame.pack(fill="x", padx=10, pady=10)
+        self.drop_frame.pack(fill="x", padx=5, pady=5)
         
         inner_drop = tk.Frame(self.drop_frame, bg="#2c3e50")
-        inner_drop.pack(pady=20)
+        inner_drop.pack(pady=5)
 
         self.drop_label = tk.Label(
-            inner_drop, text="Drag & Drop .torrent File Here  —or—  ", 
+            inner_drop, text="Use this button to load a torrent file: ", 
             bg="#2c3e50", fg="white", font=("Arial", 12)
         )
         self.drop_label.pack(side="left")
@@ -161,14 +206,14 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
         self.drop_frame.drop_target_register(DND_FILES)
         self.drop_frame.dnd_bind('<<Drop>>', self.handle_drop)
 
-        drive_frame = tk.LabelFrame(self, text="Select NTFS Drives to Index/Search", padx=10, pady=5)
-        drive_frame.pack(fill="x", padx=10, pady=5)
+        drive_frame = tk.LabelFrame(self, text="Select NTFS Drives to search", padx=5, pady=5)
+        drive_frame.pack(fill="x", padx=5, pady=5)
         
         self.drives_container = tk.Frame(drive_frame)
         self.drives_container.pack(anchor="w")
 
         tree_frame = tk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        tree_frame.pack(fill="both", expand=True, padx=5, pady=5)
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
         
@@ -183,6 +228,12 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
         self.tree.tag_configure("structure_match", foreground="#2ecc71")
         self.tree.tag_configure("pending", foreground="#7f8c8d")
         
+        # --- Context Menu Binding ---
+        self.context_menu = tk.Menu(self, tearoff=0)
+        self.context_menu.add_command(label="Copy Name", command=self.copy_context_name)
+        self.context_menu.add_command(label="Copy Size", command=self.copy_context_size)
+        self.tree.bind("<Button-3>", self.show_context_menu)
+        
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
@@ -192,11 +243,36 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
         hsb.grid(row=1, column=0, sticky="ew")
 
         self.start_btn = tk.Button(
-            self, text="Start Instance Search", 
-            bg="#27ae60", fg="white", font=("Arial", 12, "bold"),
-            command=self.trigger_background_search, state="disabled"
+            self, text="Start Search", 
+            bg="#2ecc71", fg="white", font=("Arial", 12, "bold"),
+            command=self.trigger_background_search, state="disabled",
+            disabledforeground="#7f8c8d",
+            background="#bdc3c7"
         )
-        self.start_btn.pack(fill="x", padx=10, pady=10)
+        self.start_btn.pack(fill="x", padx=5, pady=5)
+
+    # --- Right Click Context Actions ---
+    def show_context_menu(self, event):
+        item = self.tree.identify_row(event.y)
+        if item:
+            self.tree.selection_set(item)
+            self.context_menu.post(event.x_root, event.y_root)
+
+    def copy_context_name(self):
+        selected_item = self.tree.selection()
+        if selected_item:
+            name = self.tree.item(selected_item[0], "text")
+            self.clipboard_clear()
+            self.clipboard_append(name)
+
+    def copy_context_size(self):
+        selected_item = self.tree.selection()
+        if selected_item:
+            values = self.tree.item(selected_item[0], "values")
+            if values:
+                size = values[0]
+                self.clipboard_clear()
+                self.clipboard_append(size)
 
     def detect_ntfs_drives(self):
         bitmask = ctypes.windll.kernel32.GetLogicalDrives()
@@ -229,8 +305,9 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
     def process_selected_file(self, file_path):
         if file_path.lower().endswith('.torrent'):
             try:
+                self.current_torrent_path = os.path.normpath(file_path)
                 self.parse_torrent(file_path)
-                self.start_btn.config(state="normal")
+                self.start_btn.config(state="normal", bg="#2ecc71", fg="white")
                 self.drop_frame.config(text=f" Loaded: {os.path.basename(file_path)} ", bg="#16a085")
                 self.drop_label.config(bg="#16a085", text=f"Active File: {os.path.basename(file_path)}  ")
             except Exception as e:
@@ -294,7 +371,17 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
             })
 
     def trigger_background_search(self):
-        self.start_btn.config(state="disabled", text="Searching Database (Please Wait)...")
+        self.start_btn.config(
+            state="disabled", 
+            text="Searching Database (Please Wait)...",
+            bg="#bdc3c7",         
+            fg="#7f8c8d",
+            activebackground="#bdc3c7",
+            activeforeground="#7f8c8d"
+        )
+        self.tree.focus_set()
+        self.update_idletasks()
+        
         search_thread = threading.Thread(target=self.start_search, daemon=True)
         search_thread.start()
 
@@ -304,7 +391,7 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
         selected_drives = [drive.lower() for drive, var in self.drive_vars.items() if var.get()]
         if not selected_drives:
             messagebox.showwarning("Warning", "Please select at least one drive to search.")
-            self.start_btn.config(state="normal", text="Start Instance Search")
+            self.start_btn.config(state="normal", text="Start Search", bg="#2ecc71", fg="white")
             return
 
         print(f"\n=== HYBRID SMART SEARCH ACTIVE [{INSTANCE_NAME}] ===")
@@ -387,8 +474,10 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
                                 self.tree.item(node_id, tags=("structure_match",))
                             else:
                                 self.tree.set(node_id, "Status", f"Found (Out of Structure): {match}")
+                                self.tree.item(node_id, tags=("structure_match",)) # Paint green even out of structure
                         else:
                             self.tree.set(node_id, "Status", f"Found: {match}")
+                            self.tree.item(node_id, tags=("structure_match",)) # Paint green on single/flat match configurations
                     else:
                         self.tree.set(node_id, "Status", "Not Found on Selected Drives")
                 else:
@@ -401,7 +490,12 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
         self.after(0, self.evaluate_search_results, total_found_count, discovered_parent_dir)
 
     def evaluate_search_results(self, total_found, discovered_parent_dir):
-        self.start_btn.config(state="normal", text="Start Instance Search")
+        self.start_btn.config(
+            state="normal", 
+            text="Start Search",
+            bg="#2ecc71",         
+            fg="white"            
+        )
         found_items = [item for item in self.torrent_files if item["found_path"] is not None]
         
         if total_found == 0:
@@ -431,28 +525,29 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
     def prompt_relocation_workflow(self):
         reloc_win = tk.Toplevel(self)
         reloc_win.title("Structure Mismatch Discovered")
-        reloc_win.geometry("500x180")
+        self.center_dialog(reloc_win, 500, 180)
+        
         reloc_win.resizable(False, False)
         reloc_win.grab_set()
-        
+       
         lbl = tk.Label(
             reloc_win, 
             text="Files were found, but their folder layout doesn't match the torrent.\n"
                  "Would you like to automatically reconstruct the directory layout?", 
-            font=("Arial", 10), justify="center", pady=15
+            font=("Arial", 10), justify="center", pady=30
         )
         lbl.pack()
 
         btn_frame = tk.Frame(reloc_win)
-        btn_frame.pack(pady=10)
+        btn_frame.pack(pady=5)
 
         def select_op(mode):
             reloc_win.destroy()
             self.execute_relocation_engine(mode)
 
-        tk.Button(btn_frame, text="Copy Files Here...", width=15, bg="#3498db", fg="white", command=lambda: select_op("copy")).pack(side="left", padx=10)
-        tk.Button(btn_frame, text="Move Files Here...", width=15, bg="#e67e22", fg="white", command=lambda: select_op("move")).pack(side="left", padx=10)
-        tk.Button(btn_frame, text="Cancel", width=12, command=reloc_win.destroy).pack(side="left", padx=10)
+        tk.Button(btn_frame, text="Copy Files...", width=15, bg="#2ecc71", fg="white", command=lambda: select_op("copy")).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Move Files...", width=15, bg="#f2ab5e", fg="white", command=lambda: select_op("move")).pack(side="left", padx=5)
+        tk.Button(btn_frame, text="Cancel", width=12, command=reloc_win.destroy).pack(side="left", padx=5)
 
     def execute_relocation_engine(self, mode):
         target_root = filedialog.askdirectory(title="Select Destination Folder to Build Blueprint Inside")
@@ -492,20 +587,28 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
     def show_seeding_success_modal(self, path_string, is_partial=False):
         modal = tk.Toplevel(self)
         modal.title("Ready to Seed")
-        modal.geometry("620x170")
+        
+        # Determine dynamic width sizing depending on qBittorrent option availability
+        appdata_roaming = os.environ.get("APPDATA", os.path.expanduser("~\\AppData\\Roaming"))
+        qbittorrent_exe = os.path.join(appdata_roaming, "qBittorrent", "qbittorrent.exe")
+        qb_exists = os.path.exists(qbittorrent_exe)
+        
+        window_width = 760 if qb_exists else 620
+        self.center_dialog(modal, window_width, 170)
+        
         modal.resizable(False, False)
-        modal.grab_set()
+        modal.grab_set()    
 
         if is_partial:
-            msg_text = f"You are missing some files, but you can start seeding the ones you have using this download path:\n\n\"{path_string}\""
+            msg_text = f"You are missing some files, but you can start seeding the ones you have\nusing this download path: \"{path_string}\"\n\nWARNING: If you add this torrent, the client will attempt to download the missing files."
         else:
             msg_text = f"You can start seeding this torrent by setting the download path to:\n\n\"{path_string}\""
         
-        lbl = tk.Label(modal, text=msg_text, font=("Arial", 10), justify="center", wraplength=570, pady=15)
+        lbl = tk.Label(modal, text=msg_text, font=("Arial", 10), justify="center", wraplength=window_width - 50, pady=20)
         lbl.pack()
 
         btn_frame = tk.Frame(modal)
-        btn_frame.pack(pady=10)
+        btn_frame.pack(pady=5)
 
         def copy_to_clipboard():
             self.clipboard_clear()
@@ -513,10 +616,33 @@ class TorrentLocatorsApp(TkinterDnD.Tk):
             self.update()
             copy_btn.config(text="Copied!", state="disabled")
 
+        def start_qbittorrent_seeding():
+            if not self.current_torrent_path:
+                messagebox.showerror("Error", "Missing dynamic context pointer for original .torrent source file.")
+                return
+            
+            cmd = [
+                qbittorrent_exe,
+                "--category=TFF",
+                "--skip-dialog=true",
+                "--add-stopped=false",
+                f"--save-path={path_string}",
+                self.current_torrent_path
+            ]
+            try:
+                subprocess.Popen(cmd, creationflags=subprocess.DETACHED_PROCESS | CREATE_NO_WINDOW)
+                modal.destroy()
+            except Exception as e:
+                messagebox.showerror("Execution Fault", f"Could not launch qBittorrent container:\n{e}")
+
         copy_btn = tk.Button(btn_frame, text="Copy Path", width=14, bg="#2ecc71", fg="white", command=copy_to_clipboard)
-        copy_btn.pack(side="left", padx=10)
+        copy_btn.pack(side="left", padx=5)
         
-        tk.Button(btn_frame, text="OK", width=12, command=modal.destroy).pack(side="left", padx=10)
+        if qb_exists:
+            qb_btn = tk.Button(btn_frame, text="Add to qBittorrent", width=18, bg="#3498db", fg="white", command=start_qbittorrent_seeding)
+            qb_btn.pack(side="left", padx=5)
+        
+        tk.Button(btn_frame, text="OK", width=12, command=modal.destroy).pack(side="left", padx=5)
 
     def color_subfolders_green(self, parent_node):
         for child in self.tree.get_children(parent_node):
